@@ -4,38 +4,52 @@ import { config } from './index';
 let redisClient: Redis | null = null;
 let isRedisConnected = false;
 
-try {
-  redisClient = new Redis({
-    host: config.redis.host,
-    port: config.redis.port,
-    password: config.redis.password,
-    retryStrategy: (times) => {
-      if (times > 3) {
-        console.warn('⚠️  Redis unreachable after 3 attempts. Caching running in memory fallback / passthrough mode.');
-        return null; // Stop retrying to prevent console spam
-      }
-      return Math.min(times * 1000, 3000);
-    },
-    lazyConnect: true,
-  });
+// In Vercel serverless functions, avoid attempting localhost connection if no remote Redis host is given
+const shouldAttemptRedis = Boolean(process.env.REDIS_HOST) || (!process.env.VERCEL && config.nodeEnv !== 'production');
 
-  redisClient.connect().then(() => {
-    isRedisConnected = true;
-    console.log('✅ Connected to Redis cache service.');
-  }).catch((err) => {
-    console.warn('⚠️  Redis connection skipped:', err.message);
-  });
+if (shouldAttemptRedis) {
+  try {
+    redisClient = new Redis({
+      host: config.redis.host,
+      port: config.redis.port,
+      password: config.redis.password,
+      connectTimeout: 2000,
+      retryStrategy: (times) => {
+        if (times > 2) {
+          return null; // Stop retrying to prevent connection delays
+        }
+        return Math.min(times * 1000, 2000);
+      },
+      lazyConnect: true,
+    });
 
-  redisClient.on('connect', () => { isRedisConnected = true; });
-  redisClient.on('close', () => { isRedisConnected = false; });
-  redisClient.on('error', (err) => {
-    // Suppress unhandled error crashes
-  });
-} catch (e) {
-  console.warn('⚠️  Redis initialization warning, running without cache.');
+    redisClient
+      .connect()
+      .then(() => {
+        isRedisConnected = true;
+        console.log('✅ Connected to Redis cache service.');
+      })
+      .catch((err) => {
+        console.warn('⚠️ Redis connection skipped:', err.message);
+      });
+
+    redisClient.on('connect', () => {
+      isRedisConnected = true;
+    });
+    redisClient.on('close', () => {
+      isRedisConnected = false;
+    });
+    redisClient.on('error', () => {
+      // Suppress unhandled error crashes
+    });
+  } catch (e) {
+    console.warn('⚠️ Redis initialization skipped, running in in-memory cache mode.');
+  }
+} else {
+  console.log('ℹ️ Running cache in high-performance in-memory mode.');
 }
 
-// In-memory cache fallback store for high availability even without Redis
+// In-memory cache fallback store for high availability
 const memoryStore = new Map<string, { value: string; expiry: number }>();
 
 export const cacheService = {
@@ -91,5 +105,5 @@ export const cacheService = {
 
   isHealthy(): boolean {
     return isRedisConnected;
-  }
+  },
 };
