@@ -6,13 +6,20 @@ export default async function handler(req: any, res: any) {
     await connectDatabase();
   } catch (error: any) {
     console.error('❌ Serverless Database connection error:', error.message);
+    const hasUri = Boolean(process.env.MONGODB_URI);
     return res.status(500).json({
       success: false,
-      message: 'Failed to connect to MongoDB database. Please ensure MONGODB_URI is correctly configured in Vercel settings and MongoDB Atlas Network Access allows connections from 0.0.0.0/0.',
-      error: 'DATABASE_CONNECTION_ERROR',
+      message: hasUri 
+        ? `Database connection error: ${error.message}. Please check MongoDB Atlas Network Access (0.0.0.0/0) and credentials.`
+        : 'MONGODB_URI environment variable is missing in Vercel settings! Please add MONGODB_URI in Vercel Project Settings > Environment Variables.',
+      error: error.message || 'DATABASE_CONNECTION_ERROR',
+      debug: {
+        hasMongoUri: hasUri,
+        nodeEnv: process.env.NODE_ENV,
+        errorDetail: error.message,
+      }
     });
   }
 
   return app(req, res);
 }
-
